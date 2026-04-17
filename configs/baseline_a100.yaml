@@ -1,0 +1,42 @@
+# DDPO Baseline — Google Colab A100 40GB configuration
+# Uses bfloat16 (native A100 support), Drive-based output paths.
+# Designed for use with notebooks/train_on_colab.ipynb.
+
+model:
+  sd_model_id: runwayml/stable-diffusion-v1-5
+  lora_rank: 4
+  lora_alpha: 4
+  dtype: bfloat16  # A100 native; better numerical range than fp16
+
+sampling:
+  num_inference_steps: 50
+  ddim_eta: 1.0
+  image_size: 512
+  guidance_scale: 1.0
+
+training:
+  num_train_steps: 500
+  num_prompts_per_iter: 8
+  samples_per_prompt: 4
+  inner_epochs: 1
+  learning_rate: 3.0e-4
+  weight_decay: 1.0e-4
+  clip_range: 0.1
+  advantage_clip: 5.0
+  max_grad_norm: 1.0
+  grad_accumulation_steps: 1
+
+evaluation:
+  eval_every: 25
+  n_samples_per_eval_prompt: 16
+  n_samples_per_eval_prompt_intrain: 8
+
+logging:
+  use_wandb: false
+  wandb_project: ddpo-baseline
+  log_every: 5
+  output_dir: /content/drive/MyDrive/ddpo_baseline/run1
+
+checkpoint:
+  save_every_eval: true
+  save_dir: /content/drive/MyDrive/ddpo_baseline/run1/checkpoints
