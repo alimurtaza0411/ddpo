@@ -1,7 +1,7 @@
-\"\"\"
+"""
 DDPO package initialization.
 Includes a global monkey patch for transformers compatibility.
-\"\"\"
+"""
 
 # --- Global Compatibility Patch for transformers ---
 # Some packages (ImageReward) rely on internal transformers functions that 
