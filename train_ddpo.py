@@ -272,7 +272,12 @@ def main():
     reward_model = PickScoreReward(device=device, dtype=frozen_dtype)
     diversity_fn = LPIPSDiversity(device=device)
     clip_diversity_fn = CLIPDiversity(device=device)
-    image_reward_model = ImageRewardScore(device=device)
+    
+    try:
+        image_reward_model = ImageRewardScore(device=device)
+    except Exception as e:
+        logger.warning(f"Failed to load ImageReward model: {e}. Evaluation will skip this metric.")
+        image_reward_model = None
 
     train_cfg = TrainConfig(
         num_train_steps=cfg["training"]["num_train_steps"],
@@ -338,7 +343,7 @@ def main():
             save_dir=os.path.join(output_dir, "eval_images"),
             step=0,
             clip_diversity_fn=clip_diversity_fn,
-            image_reward_fn=image_reward_model.score,
+            image_reward_fn=image_reward_model.score if image_reward_model is not None else None,
         )
         logger.info("Step 0 eval: %s", json.dumps(eval_metrics, indent=2))
         all_metrics_history.append({"step": 0, **eval_metrics})
@@ -391,7 +396,7 @@ def main():
                 save_dir=os.path.join(output_dir, "eval_images"),
                 step=step,
                 clip_diversity_fn=clip_diversity_fn,
-                image_reward_fn=image_reward_model.score,
+                image_reward_fn=image_reward_model.score if image_reward_model is not None else None,
             )
             eval_metrics["step"] = step
             all_metrics_history.append(eval_metrics)
