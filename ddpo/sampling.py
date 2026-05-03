@@ -83,23 +83,25 @@ def ddim_step_with_logprob(
     # ── 2. ᾱ_t and ᾱ_{t-1} ──────────────────────────────────────────────
     alpha_bar_t, alpha_bar_prev = _get_alpha_bars(scheduler, timestep, prev_timestep)
 
-    # move to same device/dtype as x_t
-    alpha_bar_t = alpha_bar_t.to(x_t.device, dtype=x_t.dtype)
-    alpha_bar_prev = alpha_bar_prev.to(x_t.device, dtype=x_t.dtype)
+    # DDIM math MUST be done in float32. bfloat16 rounds alpha_bar to 1.0, causing division by zero.
+    alpha_bar_t = alpha_bar_t.to(x_t.device, dtype=torch.float32)
+    alpha_bar_prev = alpha_bar_prev.to(x_t.device, dtype=torch.float32)
+    x_t_fp32 = x_t.to(torch.float32)
+    noise_pred_fp32 = noise_pred.to(torch.float32)
 
     # ── 3. Predict x_0 ──────────────────────────────────────────────────
-    x0_pred = (x_t - torch.sqrt(1.0 - alpha_bar_t) * noise_pred) / torch.sqrt(
+    x0_pred = (x_t_fp32 - torch.sqrt(1.0 - alpha_bar_t) * noise_pred_fp32) / torch.sqrt(
         alpha_bar_t
     )
 
     # ── 4. Variance σ_t² ─────────────────────────────────────────────────
-    # σ_t² = η² · (1−ᾱ_{t-1}) / (1−ᾱ_t) · (1 − ᾱ_t / ᾱ_{t-1})
     variance = (
         (eta ** 2)
         * (1.0 - alpha_bar_prev)
-        / (1.0 - alpha_bar_t)
+        / (1.0 - alpha_bar_t + 1e-8)  # prevent div by zero
         * (1.0 - alpha_bar_t / alpha_bar_prev)
     )
+    variance = torch.clamp(variance, min=0.0)
     std_dev = torch.sqrt(variance)
 
     # ── 5. Direction coefficient (clamp to avoid negative under sqrt) ────
@@ -107,14 +109,19 @@ def ddim_step_with_logprob(
     dir_coeff = torch.sqrt(torch.clamp(dir_coeff_sq, min=0.0))
 
     # ── 6. Mean μ ────────────────────────────────────────────────────────
-    mean = torch.sqrt(alpha_bar_prev) * x0_pred + dir_coeff * noise_pred
+    mean = torch.sqrt(alpha_bar_prev) * x0_pred + dir_coeff * noise_pred_fp32
 
     # ── 7. Sample or evaluate ────────────────────────────────────────────
     if prev_sample is None:
-        noise = torch.randn(x_t.shape, generator=generator, device=x_t.device, dtype=x_t.dtype)
+        noise = torch.randn(x_t.shape, generator=generator, device=x_t.device, dtype=torch.float32)
         prev_sample_out = mean + std_dev * noise
     else:
-        prev_sample_out = prev_sample
+        prev_sample_out = prev_sample.to(torch.float32)
+
+    # Cast back to original dtype
+    prev_sample_out = prev_sample_out.to(x_t.dtype)
+    variance = variance.to(x_t.dtype)
+    mean = mean.to(x_t.dtype)
 
     # ── 8. Log-probability ───────────────────────────────────────────────
     #  log N(x; μ, σ²I) = −‖x − μ‖²/(2σ²) − D/2 · log(2πσ²)
