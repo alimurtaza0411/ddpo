@@ -195,7 +195,7 @@ def setup_pipeline(
         lora_path = os.path.join(resume_path, "lora")
         if not os.path.isdir(lora_path):
             lora_path = resume_path
-        pipe.unet = PeftModel.from_pretrained(pipe.unet, lora_path)
+        pipe.unet = PeftModel.from_pretrained(pipe.unet, lora_path, is_trainable=True)
     else:
         lora_config = LoraConfig(
             r=model_cfg["lora_rank"],
