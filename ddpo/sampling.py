@@ -301,5 +301,12 @@ def encode_prompt(pipe: StableDiffusionPipeline, prompts: list[str]) -> torch.Te
         return_tensors="pt",
     )
     with torch.no_grad():
-        embeds = pipe.text_encoder(tok.input_ids.to(pipe.text_encoder.device))[0]
+        outputs = pipe.text_encoder(tok.input_ids.to(pipe.text_encoder.device))
+        # Handle both raw tensors and BaseModelOutput objects
+        if hasattr(outputs, "last_hidden_state"):
+            embeds = outputs.last_hidden_state
+        elif isinstance(outputs, (list, tuple)):
+            embeds = outputs[0]
+        else:
+            embeds = outputs
     return embeds
