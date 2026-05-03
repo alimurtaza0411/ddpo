@@ -123,7 +123,11 @@ def ppo_step(
         )
 
         # PPO clipped surrogate
-        ratio = torch.exp(new_lp - old_lp)
+        log_ratio = new_lp - old_lp
+        # Clamp log_ratio to avoid exp() overflowing into Inf
+        log_ratio = torch.clamp(log_ratio, -10.0, 10.0)
+        ratio = torch.exp(log_ratio)
+        
         adv = advantages.to(device)
 
         surr1 = ratio * adv

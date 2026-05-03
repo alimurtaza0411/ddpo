@@ -118,20 +118,19 @@ def ddim_step_with_logprob(
     else:
         prev_sample_out = prev_sample.to(torch.float32)
 
+    # ── 8. Log-probability ───────────────────────────────────────────────
+    # Compute in float32 to avoid massive precision loss when summing 16,384 dimensions
+    D = prev_sample_out.shape[1:].numel()
+    diff_fp32 = prev_sample_out.to(torch.float32) - mean  # mean is already fp32
+    variance_safe = variance + 1e-8
+    
+    log_prob = (
+        -0.5 * (diff_fp32 ** 2).flatten(1).sum(1) / variance_safe
+        - 0.5 * D * torch.log(2.0 * torch.pi * variance_safe)
+    )
+
     # Cast back to original dtype
     prev_sample_out = prev_sample_out.to(x_t.dtype)
-    variance = variance.to(x_t.dtype)
-    mean = mean.to(x_t.dtype)
-
-    # ── 8. Log-probability ───────────────────────────────────────────────
-    #  log N(x; μ, σ²I) = −‖x − μ‖²/(2σ²) − D/2 · log(2πσ²)
-    #  We sum over all spatial+channel dims → one scalar per batch element.
-    D = prev_sample_out.shape[1:].numel()  # C * H * W
-    diff = prev_sample_out - mean
-    log_prob = (
-        -0.5 * (diff ** 2).flatten(1).sum(1) / (variance + 1e-15)
-        - 0.5 * D * torch.log(2.0 * torch.pi * variance + 1e-15)
-    )
 
     return prev_sample_out, log_prob
 
