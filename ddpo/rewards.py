@@ -22,9 +22,17 @@ from transformers import AutoModel, AutoProcessor
 # --- Compatibility Patch for ImageReward ---
 try:
     import transformers.modeling_utils
-    if not hasattr(transformers.modeling_utils, "apply_chunking_to_forward"):
-        import transformers.pytorch_utils
-        transformers.modeling_utils.apply_chunking_to_forward = transformers.pytorch_utils.apply_chunking_to_forward
+    import transformers.pytorch_utils
+    # List of functions moved in newer transformers versions
+    moved_functions = [
+        "apply_chunking_to_forward",
+        "find_pruneable_heads_and_indices",
+        "prune_linear_layer",
+    ]
+    for name in moved_functions:
+        if not hasattr(transformers.modeling_utils, name):
+            if hasattr(transformers.pytorch_utils, name):
+                setattr(transformers.modeling_utils, name, getattr(transformers.pytorch_utils, name))
 except (ImportError, AttributeError):
     pass
 # -------------------------------------------
