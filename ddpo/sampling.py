@@ -281,21 +281,26 @@ def compute_log_prob_for_step(
     return log_prob
 
 
-def decode_latents(pipe: StableDiffusionPipeline, latents: torch.Tensor) -> list:
-    """Decode latents → PIL images. Uses fp32 for VAE stability."""
+def decode_latents(pipe: StableDiffusionPipeline, latents: torch.Tensor, batch_size: int = 4) -> list:
+    """Decode latents → PIL images. Uses fp32 for VAE stability. Processes in batches to avoid OOM."""
     from PIL import Image
     import numpy as np
 
     latents = latents.to(pipe.vae.device, dtype=torch.float32)
     latents = latents / pipe.vae.config.scaling_factor
 
+    all_imgs = []
     with torch.no_grad():
-        imgs = pipe.vae.decode(latents).sample
+        for i in range(0, latents.shape[0], batch_size):
+            batch_latents = latents[i:i + batch_size]
+            imgs = pipe.vae.decode(batch_latents).sample
+            imgs = (imgs / 2 + 0.5).clamp(0, 1)
+            imgs = imgs.cpu().permute(0, 2, 3, 1).numpy()
+            imgs = (imgs * 255).round().astype(np.uint8)
+            for img in imgs:
+                all_imgs.append(Image.fromarray(img))
 
-    imgs = (imgs / 2 + 0.5).clamp(0, 1)
-    imgs = imgs.cpu().permute(0, 2, 3, 1).numpy()
-    imgs = (imgs * 255).round().astype(np.uint8)
-    return [Image.fromarray(img) for img in imgs]
+    return all_imgs
 
 
 def encode_prompt(pipe: StableDiffusionPipeline, prompts: list[str]) -> torch.Tensor:
