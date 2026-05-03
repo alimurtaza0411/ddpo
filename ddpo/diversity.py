@@ -117,6 +117,9 @@ class CLIPDiversity:
                 images=batch, return_tensors="pt",
             ).to(self.device)
             embs = self.model.get_image_features(**inputs)
+            # Handle BaseModelOutputWithPooling (extract raw tensor)
+            embs = getattr(embs, "image_embeds",
+                           getattr(embs, "pooler_output", embs))
             embs = embs / embs.norm(dim=-1, keepdim=True)
             all_embs.append(embs.float().cpu())
 
