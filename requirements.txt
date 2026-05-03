@@ -15,3 +15,4 @@ jupyter>=1.0.0
 ipywidgets>=8.0.0
 pytest>=7.4.0
 open_clip_torch>=2.24.0
+image-reward>=1.0

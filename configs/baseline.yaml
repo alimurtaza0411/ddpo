@@ -27,7 +27,7 @@ training:
 
 evaluation:
   eval_every: 25
-  n_samples_per_eval_prompt: 16
+  n_samples_per_eval_prompt: 50
   n_samples_per_eval_prompt_intrain: 8
 
 logging:

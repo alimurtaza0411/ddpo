@@ -26,10 +26,10 @@ from diffusers import DDIMScheduler, StableDiffusionPipeline
 from peft import LoraConfig, PeftModel, get_peft_model
 from tqdm import tqdm
 
-from ddpo.diversity import LPIPSDiversity
+from ddpo.diversity import CLIPDiversity, LPIPSDiversity
 from ddpo.eval import evaluate, generate_before_after_grid
 from ddpo.prompts import EVAL_PROMPTS, sample_train_prompts
-from ddpo.rewards import PickScoreReward
+from ddpo.rewards import ImageRewardScore, PickScoreReward
 from ddpo.training import TrainConfig, train_one_iteration
 
 logging.basicConfig(
@@ -271,6 +271,8 @@ def main():
 
     reward_model = PickScoreReward(device=device, dtype=frozen_dtype)
     diversity_fn = LPIPSDiversity(device=device)
+    clip_diversity_fn = CLIPDiversity(device=device)
+    image_reward_model = ImageRewardScore(device=device)
 
     train_cfg = TrainConfig(
         num_train_steps=cfg["training"]["num_train_steps"],
@@ -335,6 +337,8 @@ def main():
             image_size=train_cfg.image_size,
             save_dir=os.path.join(output_dir, "eval_images"),
             step=0,
+            clip_diversity_fn=clip_diversity_fn,
+            image_reward_fn=image_reward_model.score,
         )
         logger.info("Step 0 eval: %s", json.dumps(eval_metrics, indent=2))
         all_metrics_history.append({"step": 0, **eval_metrics})
@@ -386,6 +390,8 @@ def main():
                 image_size=train_cfg.image_size,
                 save_dir=os.path.join(output_dir, "eval_images"),
                 step=step,
+                clip_diversity_fn=clip_diversity_fn,
+                image_reward_fn=image_reward_model.score,
             )
             eval_metrics["step"] = step
             all_metrics_history.append(eval_metrics)

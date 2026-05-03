@@ -35,13 +35,15 @@ def evaluate(
     pipe: StableDiffusionPipeline,
     reward_fn,
     diversity_fn: LPIPSDiversity,
-    n_samples: int = 16,
+    n_samples: int = 50,
     num_inference_steps: int = 50,
     ddim_eta: float = 1.0,
     guidance_scale: float = 1.0,
     image_size: int = 512,
     save_dir: Optional[str] = None,
     step: int = 0,
+    clip_diversity_fn=None,
+    image_reward_fn=None,
 ) -> Dict[str, float]:
     """
     Run evaluation on the held-out prompt set.
@@ -50,6 +52,8 @@ def evaluate(
     (same prompt, varied noise).  Computes:
       - PickScore (mean over n_samples)
       - LPIPS diversity (mean pairwise distance among n_samples)
+      - CLIP embedding variance (if clip_diversity_fn provided)
+      - ImageReward (if image_reward_fn provided)
 
     Args:
         pipe:               SD pipeline (LoRA enabled or disabled).
@@ -62,6 +66,8 @@ def evaluate(
         image_size:         spatial resolution.
         save_dir:           if set, save sample grids here.
         step:               training step (for filenames).
+        clip_diversity_fn:  optional CLIPDiversity instance.
+        image_reward_fn:    optional ImageRewardScore.score callable.
 
     Returns:
         Dict of aggregated metrics.
@@ -69,8 +75,14 @@ def evaluate(
     device = next(pipe.unet.parameters()).device
     pipe.unet.eval()
 
+    metric_keys = ["pickscore", "diversity"]
+    if clip_diversity_fn is not None:
+        metric_keys.append("clip_variance")
+    if image_reward_fn is not None:
+        metric_keys.append("image_reward")
+
     results: Dict[str, Dict[str, List[float]]] = {
-        cat: {"pickscore": [], "diversity": []}
+        cat: {k: [] for k in metric_keys}
         for cat in EVAL_PROMPTS
     }
 
@@ -85,9 +97,19 @@ def evaluate(
             scores = reward_fn(images, [prompt] * n_samples)
             results[category]["pickscore"].append(scores.mean().item())
 
-            # Diversity (intra-prompt)
+            # LPIPS diversity (intra-prompt)
             div = diversity_fn.compute(images)
             results[category]["diversity"].append(div)
+
+            # CLIP embedding variance
+            if clip_diversity_fn is not None:
+                clip_var = clip_diversity_fn.compute(images)
+                results[category]["clip_variance"].append(clip_var)
+
+            # ImageReward
+            if image_reward_fn is not None:
+                ir_scores = image_reward_fn(images, [prompt] * n_samples)
+                results[category]["image_reward"].append(ir_scores.mean().item())
 
             if save_dir is not None:
                 _save_grid(
@@ -97,18 +119,16 @@ def evaluate(
 
     # ── Aggregate ────────────────────────────────────────────────────────
     metrics: Dict[str, float] = {}
-    all_pick, all_div = [], []
+    all_values: Dict[str, list] = {k: [] for k in metric_keys}
 
     for cat in EVAL_PROMPTS:
-        ps = results[cat]["pickscore"]
-        dv = results[cat]["diversity"]
-        metrics[f"eval/{cat}/pickscore"] = np.mean(ps)
-        metrics[f"eval/{cat}/diversity"] = np.mean(dv)
-        all_pick.extend(ps)
-        all_div.extend(dv)
+        for k in metric_keys:
+            vals = results[cat][k]
+            metrics[f"eval/{cat}/{k}"] = np.mean(vals)
+            all_values[k].extend(vals)
 
-    metrics["eval/overall/pickscore"] = np.mean(all_pick)
-    metrics["eval/overall/diversity"] = np.mean(all_div)
+    for k in metric_keys:
+        metrics[f"eval/overall/{k}"] = np.mean(all_values[k])
 
     return metrics
 
