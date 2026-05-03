@@ -19,6 +19,16 @@ import torch.nn as nn
 from PIL import Image
 from transformers import AutoModel, AutoProcessor
 
+# --- Compatibility Patch for ImageReward ---
+try:
+    import transformers.modeling_utils
+    if not hasattr(transformers.modeling_utils, "apply_chunking_to_forward"):
+        import transformers.pytorch_utils
+        transformers.modeling_utils.apply_chunking_to_forward = transformers.pytorch_utils.apply_chunking_to_forward
+except (ImportError, AttributeError):
+    pass
+# -------------------------------------------
+
 logger = logging.getLogger(__name__)
 
 
