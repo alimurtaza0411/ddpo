@@ -229,7 +229,10 @@ def generate_before_after_grid(
             row = p_idx * 2 + (1 if lora_on else 0)
 
             if not lora_on:
-                pipe.unet.disable_adapters()
+                if hasattr(pipe.unet, "disable_adapter_layers"):
+                    pipe.unet.disable_adapter_layers()
+                else:
+                    pipe.unet.disable_adapters()
 
             for s_idx, seed in enumerate(seeds):
                 prompt_embeds = encode_prompt(pipe, [prompt]).to(device)
@@ -256,7 +259,10 @@ def generate_before_after_grid(
                     )
 
             if not lora_on:
-                pipe.unet.enable_adapters()
+                if hasattr(pipe.unet, "enable_adapter_layers"):
+                    pipe.unet.enable_adapter_layers()
+                else:
+                    pipe.unet.enable_adapters()
 
             axes[p_idx * 2, n_seeds // 2].set_title(
                 prompt[:60], fontsize=8, pad=10,
