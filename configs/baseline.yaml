@@ -23,7 +23,7 @@ training:
   clip_range: 0.1
   advantage_clip: 5.0
   max_grad_norm: 0.5
-  grad_accumulation_steps: 1
+  grad_accumulation_steps: 10
 
 evaluation:
   eval_every: 25

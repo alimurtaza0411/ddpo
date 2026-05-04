@@ -124,8 +124,8 @@ def ppo_step(
 
         # PPO clipped surrogate
         log_ratio = new_lp - old_lp
-        # Clamp log_ratio to avoid exp() overflowing into Inf
-        log_ratio = torch.clamp(log_ratio, -10.0, 10.0)
+        # Tight clamp to prevent bfloat16 gradient overflow (exp(2) ~ 7.4)
+        log_ratio = torch.clamp(log_ratio, -2.0, 2.0)
         ratio = torch.exp(log_ratio)
         
         adv = advantages.to(device)
