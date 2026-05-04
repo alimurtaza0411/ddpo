@@ -313,7 +313,11 @@ def main():
         start_step, all_metrics_history = load_checkpoint(
             optimizer, resume_path, prompt_rng,
         )
-        logger.info("Resuming training from step %d", start_step)
+        # Force the optimizer to use the learning rate from the current config
+        for param_group in optimizer.param_groups:
+            param_group["lr"] = train_cfg.learning_rate
+            
+        logger.info("Resuming training from step %d (LR forced to %s)", start_step, train_cfg.learning_rate)
 
     # ── Wandb ────────────────────────────────────────────────────────────
     use_wandb = cfg["logging"].get("use_wandb", False)
