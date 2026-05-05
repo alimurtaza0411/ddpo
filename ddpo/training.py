@@ -50,6 +50,8 @@ class TrainConfig:
     ddim_eta: float = 1.0
     guidance_scale: float = 1.0
     image_size: int = 512
+    kl_beta: float = 0.0
+    kl_mode: str = "squared_logprob"
 
 
 def compute_advantages(
@@ -100,6 +102,8 @@ def ppo_step(
     total_loss = 0.0
     total_ratio = 0.0
     total_clipped_frac = 0.0
+    total_kl_penalty = 0.0
+    total_ref_logprob_gap = 0.0
     n_steps = 0
 
     pipe.unet.train()
@@ -134,6 +138,37 @@ def ppo_step(
         surr2 = torch.clamp(ratio, 1.0 - cfg.clip_range, 1.0 + cfg.clip_range) * adv
         loss = -torch.min(surr1, surr2).mean()
 
+        if cfg.kl_beta > 0.0:
+            adapters_disabled = False
+            try:
+                _set_adapters_enabled(pipe.unet, False)
+                adapters_disabled = True
+                with torch.no_grad():
+                    ref_lp = compute_log_prob_for_step(
+                        pipe,
+                        x_t,
+                        x_prev,
+                        t,
+                        prompt_embeds,
+                        eta=cfg.ddim_eta,
+                        guidance_scale=cfg.guidance_scale,
+                    )
+            finally:
+                if adapters_disabled:
+                    _set_adapters_enabled(pipe.unet, True)
+
+            ref_gap = new_lp - ref_lp.detach()
+            if cfg.kl_mode == "sampled_logprob":
+                kl_penalty = ref_gap.mean()
+            elif cfg.kl_mode == "squared_logprob":
+                kl_penalty = 0.5 * ref_gap.pow(2).mean()
+            else:
+                raise ValueError(f"Unknown kl_mode: {cfg.kl_mode}")
+
+            loss = loss + cfg.kl_beta * kl_penalty
+            total_kl_penalty += kl_penalty.item()
+            total_ref_logprob_gap += ref_gap.mean().item()
+
         # Scale loss for gradient accumulation
         scaled_loss = loss / cfg.grad_accumulation_steps
         scaled_loss.backward()
@@ -162,7 +197,23 @@ def ppo_step(
         "loss": total_loss / max(n_steps, 1),
         "mean_ratio": total_ratio / max(n_steps, 1),
         "clipped_frac": total_clipped_frac / max(n_steps, 1),
+        "kl_penalty": total_kl_penalty / max(n_steps, 1),
+        "ref_logprob_gap": total_ref_logprob_gap / max(n_steps, 1),
     }
+
+
+def _set_adapters_enabled(unet: nn.Module, enabled: bool) -> None:
+    """Toggle PEFT LoRA adapters across PEFT versions."""
+    if enabled:
+        if hasattr(unet, "enable_adapter_layers"):
+            unet.enable_adapter_layers()
+        elif hasattr(unet, "enable_adapters"):
+            unet.enable_adapters()
+    else:
+        if hasattr(unet, "disable_adapter_layers"):
+            unet.disable_adapter_layers()
+        elif hasattr(unet, "disable_adapters"):
+            unet.disable_adapters()
 
 
 def train_one_iteration(
@@ -211,7 +262,13 @@ def train_one_iteration(
     images: List[Image.Image] = decode_latents(pipe, final_latents)
 
     # ── 4. Score ─────────────────────────────────────────────────────────
-    rewards = reward_fn(images, prompts)  # (B,) CPU tensor
+    reward_out = reward_fn(images, prompts)
+    if hasattr(reward_out, "total"):
+        rewards = reward_out.total.float().cpu()
+        reward_metrics = dict(getattr(reward_out, "metrics", {}))
+    else:
+        rewards = reward_out.float().cpu()  # (B,) CPU tensor
+        reward_metrics = {}
 
     # ── 5. Advantages ────────────────────────────────────────────────────
     advantages = compute_advantages(rewards, clip_value=cfg.advantage_clip)
@@ -221,6 +278,7 @@ def train_one_iteration(
         "reward_mean": rewards.mean().item(),
         "reward_std": rewards.std().item(),
     }
+    all_metrics.update(reward_metrics)
 
     for epoch in range(cfg.inner_epochs):
         metrics = ppo_step(

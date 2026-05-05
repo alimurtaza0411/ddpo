@@ -1,0 +1,52 @@
+# Diversity-aware DDPO smoketest — T4 16GB / quick validation.
+
+model:
+  sd_model_id: runwayml/stable-diffusion-v1-5
+  lora_rank: 4
+  lora_alpha: 4
+  dtype: float16
+
+sampling:
+  num_inference_steps: 20
+  ddim_eta: 1.0
+  image_size: 512
+  guidance_scale: 1.0
+
+reward:
+  type: multi_objective
+  normalize_components: true
+  diversity_metric: clip
+  weights:
+    preference: 1.0
+    faithfulness: 0.25
+    diversity: 0.50
+    image_reward: 0.0
+  kl_beta: 0.001
+  kl_mode: squared_logprob
+
+training:
+  num_train_steps: 30
+  num_prompts_per_iter: 2
+  samples_per_prompt: 2
+  inner_epochs: 1
+  learning_rate: 3.0e-4
+  weight_decay: 1.0e-4
+  clip_range: 0.1
+  advantage_clip: 5.0
+  max_grad_norm: 1.0
+  grad_accumulation_steps: 1
+
+evaluation:
+  eval_every: 10
+  n_samples_per_eval_prompt: 4
+  n_samples_per_eval_prompt_intrain: 4
+
+logging:
+  use_wandb: false
+  wandb_project: ddpo-multi-objective-smoketest
+  log_every: 1
+  output_dir: outputs/multi_objective_smoketest
+
+checkpoint:
+  save_every_eval: true
+  save_dir: checkpoints/multi_objective_smoketest

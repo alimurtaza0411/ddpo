@@ -12,7 +12,8 @@ NOT the CLIP-ViT-L that Stable Diffusion 1.5 uses.
 from __future__ import annotations
 
 import logging
-from typing import List
+from dataclasses import dataclass, field
+from typing import Callable, Dict, List, Optional
 
 import torch
 import torch.nn as nn
@@ -20,6 +21,26 @@ from PIL import Image
 from transformers import AutoModel, AutoProcessor
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class RewardOutput:
+    """Composite reward values plus component-level logging data."""
+
+    total: torch.Tensor
+    components: Dict[str, torch.Tensor] = field(default_factory=dict)
+    metrics: Dict[str, float] = field(default_factory=dict)
+
+
+def _standardize(values: torch.Tensor, eps: float = 1e-8) -> torch.Tensor:
+    """Batch-standardise a reward component, with a safe zero-variance path."""
+    values = values.float().cpu()
+    if values.numel() < 2:
+        return torch.zeros_like(values)
+    std = values.std()
+    if std.item() < eps:
+        return torch.zeros_like(values)
+    return (values - values.mean()) / (std + eps)
 
 
 class PickScoreReward(nn.Module):
@@ -130,3 +151,99 @@ class ImageRewardScore(nn.Module):
             s = self.model.score(prompt, img)
             scores.append(s)
         return torch.tensor(scores, dtype=torch.float32)
+
+
+class MultiObjectiveReward:
+    """
+    Compose preference, prompt-faithfulness, and diversity rewards.
+
+    The returned ``total`` tensor is still one scalar per sampled image, so the
+    PPO update loop can remain unchanged.  Component values are logged
+    separately to support Pareto-style analysis across reward dimensions.
+    """
+
+    def __init__(
+        self,
+        preference_fn: Callable[[List[Image.Image], List[str]], torch.Tensor],
+        weights: Optional[Dict[str, float]] = None,
+        diversity_scorer: Optional[object] = None,
+        faithfulness_scorer: Optional[object] = None,
+        image_reward_fn: Optional[Callable[[List[Image.Image], List[str]], torch.Tensor]] = None,
+        normalize_components: bool = True,
+    ):
+        self.preference_fn = preference_fn
+        self.weights = {
+            "preference": 1.0,
+            "faithfulness": 0.0,
+            "diversity": 0.0,
+            "image_reward": 0.0,
+            **(weights or {}),
+        }
+        self.diversity_scorer = diversity_scorer
+        self.faithfulness_scorer = faithfulness_scorer
+        self.image_reward_fn = image_reward_fn
+        self.normalize_components = normalize_components
+
+    def _component_for_total(self, values: torch.Tensor) -> torch.Tensor:
+        if self.normalize_components:
+            return _standardize(values)
+        return values.float().cpu()
+
+    def __call__(
+        self,
+        images: List[Image.Image],
+        prompts: List[str],
+    ) -> RewardOutput:
+        components: Dict[str, torch.Tensor] = {}
+
+        preference = self.preference_fn(images, prompts).float().cpu()
+        components["preference"] = preference
+
+        if self.weights["faithfulness"] != 0.0:
+            if self.faithfulness_scorer is None or not hasattr(
+                self.faithfulness_scorer, "score_text_image"
+            ):
+                raise ValueError(
+                    "reward.weights.faithfulness is non-zero, but no scorer "
+                    "with score_text_image(images, prompts) was provided."
+                )
+            components["faithfulness"] = self.faithfulness_scorer.score_text_image(
+                images, prompts,
+            ).float().cpu()
+
+        if self.weights["diversity"] != 0.0:
+            if self.diversity_scorer is None or not hasattr(
+                self.diversity_scorer, "per_image_novelty"
+            ):
+                raise ValueError(
+                    "reward.weights.diversity is non-zero, but no scorer "
+                    "with per_image_novelty(images, prompts) was provided."
+                )
+            components["diversity"] = self.diversity_scorer.per_image_novelty(
+                images, prompts,
+            ).float().cpu()
+
+        if self.weights["image_reward"] != 0.0:
+            if self.image_reward_fn is None:
+                raise ValueError(
+                    "reward.weights.image_reward is non-zero, but ImageReward "
+                    "is unavailable."
+                )
+            components["image_reward"] = self.image_reward_fn(
+                images, prompts,
+            ).float().cpu()
+
+        total = torch.zeros_like(preference)
+        metrics: Dict[str, float] = {}
+        for name, values in components.items():
+            raw = values.float().cpu()
+            weight = float(self.weights.get(name, 0.0))
+            total = total + weight * self._component_for_total(raw)
+            metrics[f"reward/{name}_raw_mean"] = raw.mean().item()
+            metrics[f"reward/{name}_raw_std"] = raw.std().item()
+            metrics[f"reward/{name}_weight"] = weight
+
+        metrics["reward/total_mean"] = total.mean().item()
+        metrics["reward/total_std"] = total.std().item()
+
+        return RewardOutput(total=total, components=components, metrics=metrics)

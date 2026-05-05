@@ -29,7 +29,7 @@ from tqdm import tqdm
 from ddpo.diversity import CLIPDiversity, LPIPSDiversity
 from ddpo.eval import evaluate, generate_before_after_grid
 from ddpo.prompts import EVAL_PROMPTS, sample_train_prompts
-from ddpo.rewards import ImageRewardScore, PickScoreReward
+from ddpo.rewards import ImageRewardScore, MultiObjectiveReward, PickScoreReward
 from ddpo.training import TrainConfig, train_one_iteration
 
 logging.basicConfig(
@@ -279,6 +279,37 @@ def main():
         logger.warning(f"Failed to load ImageReward model: {e}. Evaluation will skip this metric.")
         image_reward_model = None
 
+    reward_cfg = cfg.get("reward", {})
+    reward_type = reward_cfg.get("type", "pickscore")
+    if reward_type in ("multi_objective", "composite"):
+        diversity_metric = reward_cfg.get("diversity_metric", "clip")
+        if diversity_metric == "clip":
+            train_diversity_scorer = clip_diversity_fn
+        elif diversity_metric == "lpips":
+            train_diversity_scorer = diversity_fn
+        else:
+            raise ValueError(f"Unknown reward.diversity_metric: {diversity_metric}")
+
+        reward_fn = MultiObjectiveReward(
+            preference_fn=reward_model.score,
+            weights=reward_cfg.get("weights", {}),
+            diversity_scorer=train_diversity_scorer,
+            faithfulness_scorer=clip_diversity_fn,
+            image_reward_fn=image_reward_model.score if image_reward_model is not None else None,
+            normalize_components=reward_cfg.get("normalize_components", True),
+        )
+        logger.info(
+            "Using multi-objective reward: weights=%s, diversity_metric=%s, normalize=%s",
+            reward_fn.weights,
+            diversity_metric,
+            reward_fn.normalize_components,
+        )
+    elif reward_type == "pickscore":
+        reward_fn = reward_model.score
+        logger.info("Using single-objective PickScore reward")
+    else:
+        raise ValueError(f"Unknown reward.type: {reward_type}")
+
     train_cfg = TrainConfig(
         num_train_steps=cfg["training"]["num_train_steps"],
         num_prompts_per_iter=cfg["training"]["num_prompts_per_iter"],
@@ -294,6 +325,8 @@ def main():
         ddim_eta=cfg["sampling"]["ddim_eta"],
         guidance_scale=cfg["sampling"]["guidance_scale"],
         image_size=cfg["sampling"]["image_size"],
+        kl_beta=cfg["training"].get("kl_beta", reward_cfg.get("kl_beta", 0.0)),
+        kl_mode=cfg["training"].get("kl_mode", reward_cfg.get("kl_mode", "squared_logprob")),
     )
 
     # Optimizer: only LoRA params
@@ -373,7 +406,7 @@ def main():
         gen = torch.Generator(device=device).manual_seed(args.seed + step)
 
         metrics = train_one_iteration(
-            pipe, reward_model.score, optimizer, train_cfg,
+            pipe, reward_fn, optimizer, train_cfg,
             prompts, step, generator=gen,
         )
 

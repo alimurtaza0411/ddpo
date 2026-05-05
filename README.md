@@ -8,14 +8,16 @@ DDPO treats the iterative denoising process of a diffusion model as a multi-step
 
 - Fine-tunes SD 1.5 with **LoRA adapters** (rank 4) on UNet attention modules
 - Uses **PickScore** (CLIP-ViT-H based) as the reward model
-- Measures intra-prompt diversity via **LPIPS** pairwise distances
+- Measures intra-prompt diversity via **LPIPS** pairwise distances and **CLIP embedding variance**
 - Demonstrates that reward optimisation causes **diversity collapse** — images for the same prompt converge to similar outputs
+- Adds a configurable **multi-objective DDPO** variant with preference, prompt-faithfulness, diversity reward, and optional KL-style regularisation
 
 ## Repository Structure
 
 ```
 DDPO/
 ├── train_ddpo.py              # Main training script (CLI-configurable, resumable)
+├── compare_runs.py            # Baseline vs multi-objective comparison helper
 ├── ddpo/
 │   ├── __init__.py
 │   ├── sampling.py            # DDIM sampling with stored log-probabilities
@@ -27,7 +29,9 @@ DDPO/
 ├── configs/
 │   ├── baseline.yaml          # Generic A100 config
 │   ├── baseline_a100.yaml     # Google Colab A100 config (bf16, Drive paths)
-│   └── t4_smoketest.yaml      # T4 16GB config (quick validation)
+│   ├── t4_smoketest.yaml      # T4 16GB config (quick validation)
+│   ├── multi_objective_a100.yaml
+│   └── multi_objective_t4_smoketest.yaml
 ├── tests/
 │   ├── conftest.py            # Shared fixtures (tiny UNet, etc.)
 │   ├── test_sampling.py       # Log-prob consistency, Gaussian density, determinism
@@ -91,6 +95,33 @@ python train_ddpo.py --config configs/baseline.yaml
 ```bash
 python train_ddpo.py --config configs/t4_smoketest.yaml
 ```
+
+### Multi-objective DDPO
+
+After establishing the PickScore-only baseline, run the diversity-aware variant:
+
+```bash
+python train_ddpo.py --config configs/multi_objective_a100.yaml --resume_from auto
+```
+
+The multi-objective reward is configured under `reward:`:
+
+```yaml
+reward:
+  type: multi_objective
+  normalize_components: true
+  diversity_metric: clip
+  weights:
+    preference: 1.0
+    faithfulness: 0.25
+    diversity: 0.50
+    image_reward: 0.0
+  kl_beta: 0.001
+```
+
+`preference` is PickScore, `faithfulness` is CLIP image-text similarity, and
+`diversity` is per-image same-prompt CLIP novelty. Components are
+batch-normalised before weighting so their scales are comparable.
 
 ### Resume from checkpoint
 
@@ -208,6 +239,18 @@ Open `notebooks/analyze_results.ipynb` after training to generate:
 - Per-category diversity collapse summary table
 - Reward vs. diversity scatter plot (shows the trade-off)
 - Before/after qualitative comparison grids
+
+Compare baseline and multi-objective runs:
+
+```bash
+python compare_runs.py \
+  --run baseline=/content/drive/MyDrive/ddpo_baseline/run1 \
+  --run multi=/content/drive/MyDrive/ddpo_multi_objective/run1 \
+  --output_dir comparisons/baseline_vs_multi
+```
+
+This writes `run_comparison.csv` and a PickScore-vs-CLIP-diversity plot for
+Pareto-style reporting.
 
 ## References
 
