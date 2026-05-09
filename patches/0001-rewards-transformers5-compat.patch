@@ -1,0 +1,24 @@
+--- a/ddpo/rewards.py
++++ b/ddpo/rewards.py
+@@ -67,9 +67,21 @@
+         ).to(self.device)
+ 
+         image_embs = self.model.get_image_features(**image_inputs)
++        if not torch.is_tensor(image_embs):
++            for _a in ('image_embeds', 'pooler_output'):
++                if hasattr(image_embs, _a):
++                    image_embs = getattr(image_embs, _a); break
++            else:
++                image_embs = image_embs.last_hidden_state[:, 0]
+         image_embs = image_embs / image_embs.norm(dim=-1, keepdim=True)
+ 
+         text_embs = self.model.get_text_features(**text_inputs)
++        if not torch.is_tensor(text_embs):
++            for _a in ('text_embeds', 'pooler_output'):
++                if hasattr(text_embs, _a):
++                    text_embs = getattr(text_embs, _a); break
++            else:
++                text_embs = text_embs.last_hidden_state[:, 0]
+         text_embs = text_embs / text_embs.norm(dim=-1, keepdim=True)
+ 
+         # PickScore = logit_scale * cosine_similarity

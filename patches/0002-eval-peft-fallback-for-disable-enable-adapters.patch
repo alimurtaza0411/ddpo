@@ -1,0 +1,34 @@
+--- a/ddpo/eval.py
++++ b/ddpo/eval.py
+@@ -209,7 +209,14 @@
+             row = p_idx * 2 + (1 if lora_on else 0)
+ 
+             if not lora_on:
+-                pipe.unet.disable_adapters()
++                try:
++                    pipe.unet.disable_adapters()
++                except (ValueError, AttributeError) as _e:
++                    print(f'[EVAL_WARN] disable_adapters failed: {_e}; using PEFT fallback')
++                    from peft.tuners.tuners_utils import BaseTunerLayer
++                    for _m in pipe.unet.modules():
++                        if isinstance(_m, BaseTunerLayer):
++                            _m.enable_adapters(False)
+ 
+             for s_idx, seed in enumerate(seeds):
+                 prompt_embeds = encode_prompt(pipe, [prompt]).to(device)
+@@ -236,7 +243,14 @@
+                     )
+ 
+             if not lora_on:
+-                pipe.unet.enable_adapters()
++                try:
++                    pipe.unet.enable_adapters()
++                except (ValueError, AttributeError) as _e:
++                    print(f'[EVAL_WARN] enable_adapters failed: {_e}; using PEFT fallback')
++                    from peft.tuners.tuners_utils import BaseTunerLayer
++                    for _m in pipe.unet.modules():
++                        if isinstance(_m, BaseTunerLayer):
++                            _m.enable_adapters(True)
+ 
+             axes[p_idx * 2, n_seeds // 2].set_title(
+                 prompt[:60], fontsize=8, pad=10,

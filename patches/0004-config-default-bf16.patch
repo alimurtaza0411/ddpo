@@ -1,0 +1,11 @@
+--- a/configs/t4_smoketest.yaml
++++ b/configs/t4_smoketest.yaml
+@@ -5,7 +5,7 @@
+   sd_model_id: runwayml/stable-diffusion-v1-5
+   lora_rank: 4
+   lora_alpha: 4
+-  dtype: float16  # T4 does not have native bf16
++  dtype: bfloat16  # bf16 native on L4/A100 and avoids final_alpha_cumprod underflow; switch to float16 only on T4
+ 
+ sampling:
+   num_inference_steps: 20

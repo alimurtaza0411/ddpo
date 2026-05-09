@@ -1,0 +1,32 @@
+--- a/ddpo/sampling.py
++++ b/ddpo/sampling.py
+@@ -84,8 +84,10 @@
+     alpha_bar_t, alpha_bar_prev = _get_alpha_bars(scheduler, timestep, prev_timestep)
+ 
+     # move to same device/dtype as x_t
+-    alpha_bar_t = alpha_bar_t.to(x_t.device, dtype=x_t.dtype)
+-    alpha_bar_prev = alpha_bar_prev.to(x_t.device, dtype=x_t.dtype)
++    # Keep alphas in fp32: in bf16, final_alpha_cumprod (0.99915) rounds to exactly 1.0,
++    # which makes variance=0 at the last DDIM step and produces NaN log-probs.
++    alpha_bar_t = alpha_bar_t.to(x_t.device, dtype=torch.float32)
++    alpha_bar_prev = alpha_bar_prev.to(x_t.device, dtype=torch.float32)
+ 
+     # ── 3. Predict x_0 ──────────────────────────────────────────────────
+     x0_pred = (x_t - torch.sqrt(1.0 - alpha_bar_t) * noise_pred) / torch.sqrt(
+@@ -121,9 +123,14 @@
+     #  We sum over all spatial+channel dims → one scalar per batch element.
+     D = prev_sample_out.shape[1:].numel()  # C * H * W
+     diff = prev_sample_out - mean
++    # Compute log-prob in fp32 for numerical stability under bf16/fp16 unet.
++    diff_f32 = diff.float()
++    var_f32 = variance.float() if torch.is_tensor(variance) else torch.tensor(
++        float(variance), dtype=torch.float32, device=diff_f32.device
++    )
+     log_prob = (
+-        -0.5 * (diff ** 2).flatten(1).sum(1) / (variance + 1e-15)
+-        - 0.5 * D * torch.log(2.0 * torch.pi * variance + 1e-15)
++        -0.5 * (diff_f32 ** 2).flatten(1).sum(1) / (var_f32 + 1e-8)
++        - 0.5 * D * torch.log(2.0 * torch.pi * var_f32 + 1e-8)
+     )
+ 
+     return prev_sample_out, log_prob
