@@ -1,0 +1,88 @@
+# Multi-objective DDPO — diversity-aware alignment.
+#
+# These are the exact configs used for the runs reported in the paper.
+# Any values previously overridden by step2_launch.sh metadata for development
+# purposes are now baked in here; the metadata overrides still work but are
+# redundant. The YAML is the canonical source of truth — do not change values
+# here without updating the paper's experimental-setup section.
+#
+# Differences from configs/baseline.yaml:
+#   1. `rewards:` — three weighted reward components instead of an implicit
+#      single PickScore. Combined reward feeds the PPO advantage; each
+#      component is also logged as
+#        reward/<name>_raw_mean (raw signal),
+#        reward/<name>_weighted_mean (= weight × raw mean, the actual
+#        contribution to the combined reward).
+#   2. `training.kl_coef: 0.01` — explicit β · KL(π_θ || π_ref) added to the
+#      loss, where π_ref is the base model (LoRA disabled via peft).
+#
+# Locked weights (sweep variable is λ_diversity):
+#   pickscore  raw ~19    × 1.0  → contribution ~19
+#   clipscore  raw ~0.27  × 20.0 → contribution ~5.4
+#   diversity  raw ~0.40  × {0, 2, 5, 10, 20, 50}  → contribution swept
+# The diversity weight is overridden per run via VM-metadata LAMBDA_DIVERSITY,
+# which step2_launch.sh sed-edits into this YAML at boot time.
+
+model:
+  sd_model_id: runwayml/stable-diffusion-v1-5
+  lora_rank: 4
+  lora_alpha: 4
+  dtype: bfloat16
+
+sampling:
+  # DDIM-30 (quality verified comparable to DDIM-50 on the smoke-test LoRA on
+  # 2026-05-02; ~40% wall-time saving with negligible PickScore delta).
+  num_inference_steps: 30
+  ddim_eta: 1.0
+  image_size: 512
+  guidance_scale: 1.0
+
+training:
+  # Paper-reported run length and batch — was 500 / 8 in the original repo
+  # template; bumped here to match the actual experimental setup.
+  num_train_steps: 1500
+  num_prompts_per_iter: 4   # × samples_per_prompt = effective batch 16
+  samples_per_prompt: 4
+  inner_epochs: 1
+  learning_rate: 3.0e-4
+  weight_decay: 1.0e-4
+  clip_range: 0.1
+  advantage_clip: 5.0
+  max_grad_norm: 1.0
+  grad_accumulation_steps: 1
+  kl_coef: 0.01   # β; set to 0.0 to disable the explicit KL term entirely
+
+rewards:
+  - type: pickscore
+    name: pickscore
+    weight: 1.0
+  - type: clipscore
+    name: clipscore
+    weight: 20.0
+    config:
+      model_id: openai/clip-vit-base-patch32
+      dtype: float32
+  - type: diversity
+    name: diversity
+    weight: 20.0   # default sweep midpoint; overridden via LAMBDA_DIVERSITY
+    config:
+      net: alex
+      image_size: 224
+
+evaluation:
+  eval_every: 50
+  in_training_n_samples: 16
+  final_n_samples: 32
+  # Legacy fallback keys:
+  n_samples_per_eval_prompt: 32
+  n_samples_per_eval_prompt_intrain: 16
+
+logging:
+  use_wandb: true
+  wandb_project: ddpo-multiobj
+  log_every: 1
+  output_dir: outputs/multiobj
+
+checkpoint:
+  save_every_eval: true
+  save_dir: checkpoints/multiobj
