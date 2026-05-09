@@ -18,6 +18,11 @@ checkpoints/
 .venv/
 venv/
 
+# Secrets
+.secrets/
+*.token
+.netrc
+
 # IDE
 .vscode/
 .idea/
