@@ -266,6 +266,19 @@ def main():
     device = args.device
     frozen_dtype = _resolve_dtype(cfg)
 
+    # ── cuBLAS warm-up ───────────────────────────────────────────────────
+    # On some PyTorch+CUDA combos (notably 2.9.1+cu129 on L4), loading multiple
+    # large CLIP-family models in sequence triggers `Cannot load symbol
+    # cublasLtCreate` at the first GPU op of training. Forcing one matmul
+    # before any heavy weights are loaded pre-allocates the cuBLAS handle and
+    # avoids the race.
+    if torch.cuda.is_available():
+        _warm = torch.randn(64, 64, device=device, dtype=torch.bfloat16)
+        _ = (_warm @ _warm).sum().item()
+        del _warm
+        torch.cuda.synchronize()
+        logger.info("cuBLAS warm-up complete")
+
     # ── Setup ────────────────────────────────────────────────────────────
     pipe = setup_pipeline(cfg, device, resume_path=resume_path)
 
@@ -337,6 +350,14 @@ def main():
         weight_decay=train_cfg.weight_decay,
     )
 
+    # Optional linear LR warmup over the first `warmup_steps` iterations.
+    warmup_steps = int(cfg["training"].get("warmup_steps", 0))
+
+    def _lr_at(step: int) -> float:
+        if warmup_steps > 0 and step < warmup_steps:
+            return train_cfg.learning_rate * (step + 1) / warmup_steps
+        return train_cfg.learning_rate
+
     prompt_rng = random.Random(args.seed)
     all_metrics_history: list = []
     start_step = 0
@@ -348,18 +369,20 @@ def main():
         )
         # Force the optimizer to use the learning rate from the current config
         for param_group in optimizer.param_groups:
-            param_group["lr"] = train_cfg.learning_rate
-            
-        logger.info("Resuming training from step %d (LR forced to %s)", start_step, train_cfg.learning_rate)
+            param_group["lr"] = _lr_at(start_step)
+
+        logger.info("Resuming training from step %d (LR set to %s)", start_step, _lr_at(start_step))
 
     # ── Wandb ────────────────────────────────────────────────────────────
     use_wandb = cfg["logging"].get("use_wandb", False)
     if use_wandb:
         import wandb
+        config_tag = os.path.splitext(os.path.basename(args.config))[0]
+        run_name = f"{config_tag}-seed{args.seed}-{time.strftime('%Y%m%d-%H%M%S')}"
         wandb.init(
             project=cfg["logging"]["wandb_project"],
             config=cfg,
-            name=f"ddpo-baseline-{time.strftime('%Y%m%d-%H%M%S')}",
+            name=run_name,
             resume="allow",
         )
 
@@ -405,10 +428,16 @@ def main():
 
         gen = torch.Generator(device=device).manual_seed(args.seed + step)
 
+        # Apply LR warmup before each iteration.
+        current_lr = _lr_at(step - 1)
+        for pg in optimizer.param_groups:
+            pg["lr"] = current_lr
+
         metrics = train_one_iteration(
             pipe, reward_fn, optimizer, train_cfg,
             prompts, step, generator=gen,
         )
+        metrics["lr"] = current_lr
 
         if step % cfg["logging"].get("log_every", 1) == 0:
             logger.info("Step %d: %s", step, {k: f"{v:.4f}" for k, v in metrics.items()})

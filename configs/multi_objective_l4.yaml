@@ -1,12 +1,10 @@
-# Diversity-aware DDPO — Google Colab A100 40GB configuration
-# Continues the project after the PickScore-only baseline by adding
-# prompt faithfulness and intra-prompt diversity terms to the RL reward.
+# DDPO Multi-objective — GCP L4 24GB configuration (run 2).
 
 model:
   sd_model_id: runwayml/stable-diffusion-v1-5
   lora_rank: 4
   lora_alpha: 4
-  dtype: bfloat16
+  dtype: float16
 
 sampling:
   num_inference_steps: 50
@@ -16,8 +14,6 @@ sampling:
 
 reward:
   type: multi_objective
-  # Components are batch-normalized before weighting so that small CLIP
-  # variance/cosine scales can compete with PickScore's ~20-point scale.
   normalize_components: true
   diversity_metric: clip
   weights:
@@ -25,15 +21,16 @@ reward:
     faithfulness: 0.25
     diversity: 0.50
     image_reward: 0.0
-  # Optional KL-style regularizer against the base SD policy.  This is a
-  # sampled log-prob distance penalty; keep small because DDIM log-probs are
-  # high-dimensional.
   kl_beta: 0.001
   kl_mode: squared_logprob
 
 training:
   num_train_steps: 500
-  num_prompts_per_iter: 8
+  # L4 24GB requires shrinking the rollout batch from 32 to 16. We keep
+  # samples_per_prompt at 4 (not 2) because the CLIP diversity reward computes
+  # same-prompt novelty — with only 2 samples per prompt it becomes a noisy
+  # pairwise estimate. Instead we halve num_prompts_per_iter (8 → 4).
+  num_prompts_per_iter: 4
   samples_per_prompt: 4
   inner_epochs: 1
   learning_rate: 1.0e-4
@@ -53,8 +50,8 @@ logging:
   use_wandb: true
   wandb_project: ddpo-final-runs
   log_every: 5
-  output_dir: /content/drive/MyDrive/ddpo_multi_objective/run2
+  output_dir: outputs/multi_objective_l4_run2
 
 checkpoint:
   save_every_eval: true
-  save_dir: /content/drive/MyDrive/ddpo_multi_objective/run2/checkpoints
+  save_dir: outputs/multi_objective_l4_run2/checkpoints

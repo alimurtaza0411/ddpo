@@ -1,0 +1,66 @@
+# Multi-objective DDPO — faithfulness-only ablation.
+# Mirror of kl_only: tests whether prompt-faithfulness reward (CLIP image-text
+# similarity) alone preserves diversity, or whether it's the explicit
+# diversity reward that's load-bearing.
+#
+# Configuration:
+#   preference   = 1.0 (PickScore)
+#   faithfulness = 1.0 (boosted vs the 0.25 in main multi-obj)
+#   diversity    = 0.0 (disabled)
+#   kl_beta      = 0.0 (disabled)
+#
+# Expected outcome: faithfulness alone should NOT preserve diversity
+# (CLIP text-similarity doesn't care about same-prompt variation).
+# If it DOES preserve, that's a surprising finding worth discussing.
+
+model:
+  sd_model_id: runwayml/stable-diffusion-v1-5
+  lora_rank: 4
+  lora_alpha: 4
+  dtype: float16
+
+sampling:
+  num_inference_steps: 50
+  ddim_eta: 1.0
+  image_size: 512
+  guidance_scale: 1.0
+
+reward:
+  type: multi_objective
+  normalize_components: true
+  diversity_metric: clip
+  weights:
+    preference: 1.0
+    faithfulness: 1.0
+    diversity: 0.0
+    image_reward: 0.0
+  kl_beta: 0.0
+  kl_mode: squared_logprob
+
+training:
+  num_train_steps: 250
+  num_prompts_per_iter: 4
+  samples_per_prompt: 4
+  inner_epochs: 1
+  learning_rate: 1.0e-4
+  weight_decay: 1.0e-4
+  clip_range: 0.1
+  advantage_clip: 5.0
+  max_grad_norm: 0.5
+  grad_accumulation_steps: 10
+  warmup_steps: 50
+
+evaluation:
+  eval_every: 25
+  n_samples_per_eval_prompt: 100
+  n_samples_per_eval_prompt_intrain: 16
+
+logging:
+  use_wandb: true
+  wandb_project: ddpo-final-runs
+  log_every: 5
+  output_dir: outputs/faithfulness_only_l4_run1
+
+checkpoint:
+  save_every_eval: true
+  save_dir: outputs/faithfulness_only_l4_run1/checkpoints

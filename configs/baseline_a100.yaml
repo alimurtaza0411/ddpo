@@ -25,18 +25,19 @@ training:
   advantage_clip: 5.0
   max_grad_norm: 0.5
   grad_accumulation_steps: 10
+  warmup_steps: 50  # linear LR warmup over first 50 iters; smooths early reward curve
 
 evaluation:
   eval_every: 25
-  n_samples_per_eval_prompt: 50
-  n_samples_per_eval_prompt_intrain: 8
+  n_samples_per_eval_prompt: 100  # final-step eval; 100 reduces table noise on the small PickScore deltas
+  n_samples_per_eval_prompt_intrain: 16  # was 8; halves CLIP-variance estimator noise
 
 logging:
-  use_wandb: false
-  wandb_project: ddpo-baseline
+  use_wandb: true
+  wandb_project: ddpo-final-runs
   log_every: 5
-  output_dir: /content/drive/MyDrive/ddpo_baseline/run1
+  output_dir: /content/drive/MyDrive/ddpo_baseline/run2
 
 checkpoint:
   save_every_eval: true
-  save_dir: /content/drive/MyDrive/ddpo_baseline/run1/checkpoints
+  save_dir: /content/drive/MyDrive/ddpo_baseline/run2/checkpoints

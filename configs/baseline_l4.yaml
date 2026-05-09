@@ -1,0 +1,49 @@
+# DDPO Baseline — GCP L4 24GB configuration (run 2).
+# L4 (Ada) supports bf16 natively but has only 24GB and ~1/4 the memory bandwidth
+# of A100. We halve samples_per_prompt to fit comfortably and keep the rest of
+# the run close to baseline_a100.yaml so the comparison to run1 (A100, n=1 seed)
+# remains valid.
+
+model:
+  sd_model_id: runwayml/stable-diffusion-v1-5
+  lora_rank: 4
+  lora_alpha: 4
+  dtype: float16  # V100 has no bf16; fp16 is fine for SD 1.5 (smoketest config also uses fp16)
+
+sampling:
+  num_inference_steps: 50
+  ddim_eta: 1.0
+  image_size: 512
+  guidance_scale: 1.0
+
+training:
+  num_train_steps: 500
+  # L4 24GB requires shrinking the rollout batch from 32 to 16. We halve
+  # num_prompts_per_iter (8 → 4) instead of samples_per_prompt so the
+  # configuration matches multi_objective_l4.yaml exactly — the only
+  # difference between baseline and multi-objective runs is the reward.
+  num_prompts_per_iter: 4
+  samples_per_prompt: 4
+  inner_epochs: 1
+  learning_rate: 1.0e-4
+  weight_decay: 1.0e-4
+  clip_range: 0.1
+  advantage_clip: 5.0
+  max_grad_norm: 0.5
+  grad_accumulation_steps: 10
+  warmup_steps: 50
+
+evaluation:
+  eval_every: 25
+  n_samples_per_eval_prompt: 100
+  n_samples_per_eval_prompt_intrain: 16
+
+logging:
+  use_wandb: true
+  wandb_project: ddpo-final-runs
+  log_every: 5
+  output_dir: outputs/baseline_l4_run2
+
+checkpoint:
+  save_every_eval: true
+  save_dir: outputs/baseline_l4_run2/checkpoints
